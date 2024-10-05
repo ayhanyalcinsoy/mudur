@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 #
 # This is a script to easily add a user to system with comar
@@ -16,7 +16,7 @@ user = {"uid": None,
 }
 
 def fail(_message):
-    print _message
+    print(_message)
     sys.exit(1)
 
 def connectToDBus():
@@ -36,7 +36,7 @@ def delUser():
     try:
         obj.deleteUser(user["uid"], user["deletefiles"],
                     dbus_interface="tr.org.pardus.comar.User.Manager")
-    except dbus.DBusException, e:
+    except dbus.DBusException as e:
         fail("Error: %s." % e)
 
 
@@ -65,4 +65,3 @@ if __name__ == "__main__":
     if not connectToDBus():
         fail("Could not connect to DBUS, please check your system settings")
     delUser()
-

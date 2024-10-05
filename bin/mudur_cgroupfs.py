@@ -1,45 +1,52 @@
-# -*- coding : utf-8 -*-
-import os, sys
+# -*- coding: utf-8 -*-
+import os
+import sys
+import subprocess
 
 def mountpoint(path):
-    status = os.system("mountpoint -q %s" % path)
-    if status == 0:
-        return True
-    else:
-        return False
+    """Check if the given path is a mountpoint."""
+    result = subprocess.run(["mountpoint", "-q", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return result.returncode == 0
 
 class Controller:
-    def __init__(self, subsysname, hierarchy, num_cgroups, enabled ):
+    def __init__(self, subsysname, hierarchy, num_cgroups, enabled):
         self.subsysname = subsysname
         self.hierarchy = hierarchy
         self.num_cgroups = num_cgroups
         self.enabled = enabled
 
     def mount(self):
+        """Mount the cgroup if it is enabled."""
         if self.enabled == 1:
             os.chdir("/sys/fs/cgroup")
-            if mountpoint(self.subsysname) == False:
+            if not mountpoint(self.subsysname):
                 s = self.subsysname
-                status = os.system("mkdir -p %s; mount -n -t cgroup -o %s cgroup %s" % (s, s,s))
-                if status == 0:
-                    return True
-                else:
+                try:
+                    os.makedirs(s, exist_ok=True)
+                    result = subprocess.run(
+                        ["mount", "-n", "-t", "cgroup", "-o", s, s],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    return result.returncode == 0
+                except Exception as e:
+                    print(f"Error mounting cgroup: {e}")
                     return False
-
+        return True
 
 class Cgroupfs:
     def __init__(self):
         self.controllers = {}
-        if self.check_fstab == True:
+        if self.check_fstab():
             print("cgroupfs in fstab, exiting.")
             sys.exit(-1)
 
-        if self.kernel_support() == False:
+        if not self.kernel_support():
             print("No kernel support for cgroupfs, exiting.")
             sys.exit(-2)
 
-        if self.check_sysfs() == False:
-            print("/sys/fs/cgroups directory not found, exiting")
+        if not self.check_sysfs():
+            print("/sys/fs/cgroup directory not found, exiting")
             sys.exit(-3)
 
         self.mount_cgroup()
@@ -48,34 +55,40 @@ class Cgroupfs:
             c.mount()
 
     def check_fstab(self):
+        """Check if cgroup is present in fstab."""
         found = False
-        for line in open("/etc/fstab").readlines():
-            if line[0] == "#":
-                continue
-            else:
-                if line.find("cgroup"):
+        with open("/etc/fstab") as fstab:
+            for line in fstab:
+                if line.startswith("#"):
+                    continue
+                if "cgroup" in line:
                     found = True
+                    break
         return found
 
     def kernel_support(self):
+        """Check if the kernel supports cgroups."""
         return os.path.isfile("/proc/cgroups")
 
     def check_sysfs(self):
-        return  os.path.isdir("/sys/fs/cgroup")
+        """Check if the /sys/fs/cgroup directory exists."""
+        return os.path.isdir("/sys/fs/cgroup")
 
     def mount_cgroup(self):
-        if mountpoint("/sys/fs/cgroup") == False:
-            cmd = " mount -t tmpfs -o uid=0,gid=0,mode=0755 cgroup /sys/fs/cgroup"
-            return  os.system(cmd)
+        """Mount the cgroup filesystem if not already mounted."""
+        if not mountpoint("/sys/fs/cgroup"):
+            cmd = "mount -t tmpfs -o uid=0,gid=0,mode=0755 cgroup /sys/fs/cgroup"
+            return os.system(cmd)
 
     def find_controllers(self):
-        for line in open("/proc/cgroups").readlines():
-            line = line.strip()
-            if line[0] == "#":
-                continue
-            else:
+        """Read /proc/cgroups and find all controllers."""
+        with open("/proc/cgroups") as cgroups:
+            for line in cgroups:
+                line = line.strip()
+                if line.startswith("#"):
+                    continue
                 subsysname, hierarchy, num_cgroups, enabled = line.split()
                 enb = int(enabled)
                 hie = int(hierarchy)
-                numc= int(num_cgroups)
+                numc = int(num_cgroups)
                 self.controllers[subsysname] = Controller(subsysname, hie, numc, enb)

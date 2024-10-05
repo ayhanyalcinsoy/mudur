@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 #
 # Copyright (C) 2006-2011 TUBITAK/UEKAE
@@ -13,7 +13,7 @@ import sys
 import os
 import glob
 import shutil
-import parser
+import ast
 
 version = "4.4.0"
 
@@ -37,13 +37,13 @@ def update_messages():
 
 def make_dist():
     distdir = "mudur-%s" % version
-    list = []
+    list_ = []
     for t in distfiles.split():
-        list.extend(glob.glob(t))
+        list_.extend(glob.glob(t))
     if os.path.exists(distdir):
         shutil.rmtree(distdir)
     os.mkdir(distdir)
-    for file_ in list:
+    for file_ in list_:
         cum = distdir[:]
         for d in os.path.dirname(file_).split('/'):
             dn = os.path.join(cum, d)
@@ -62,7 +62,7 @@ def install_file(source, prefix, dest):
         os.makedirs(os.path.dirname(dest))
     except:
         pass
-    print "installing '%s' to '%s'" % (source, dest)
+    print("installing '%s' to '%s'" % (source, dest))
     os.system("cp %s %s" % (source, dest))
 
 def install(args):
@@ -72,8 +72,9 @@ def install(args):
         prefix = args[0]
 
     # Make sure that there isn't a syntax error in mudur.py
-    code = file("bin/mudur.py").read()
-    parser.suite(code).compile()
+    with open("bin/mudur.py", "r") as f:
+        code = f.read()
+    ast.parse(code)
 
     install_file("bin/mudur.py", prefix, "sbin/mudur.py")
     install_file("bin/mudur_tmpfiles.py", prefix, "sbin/mudur_tmpfiles.py")
@@ -95,13 +96,13 @@ def install(args):
             except:
                 pass
             path = os.path.join(prefix, dest)
-            print "compiling '%s' translation '%s'" % (lang, path)
+            print("compiling '%s' translation '%s'" % (lang, path))
             os.system("msgfmt po/%s -o %s" % (item, path))
 
 def usage():
-    print "setup.py install [prefix]"
-    print "setup.py update_messages"
-    print "setup.py dist"
+    print("setup.py install [prefix]")
+    print("setup.py update_messages")
+    print("setup.py dist")
 
 def do_setup(args):
     if args == []:

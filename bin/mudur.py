@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 #
 # Pardus boot and initialization system
@@ -28,8 +28,9 @@ from mudur_cgroupfs import Cgroupfs
 # i18n #
 ########
 
+# Python 3'te ugettext fonksiyonu gettext olarak değiştirildi
 __trans = gettext.translation('mudur', fallback=True)
-_ = __trans.ugettext
+_ = __trans.gettext
 
 ##############
 # Decorators #
@@ -50,6 +51,7 @@ def plymouth_update_milestone(function):
         function()
         SPLASH.update(function.__name__)
     return wrapped
+
 
 #######################
 # Convenience methods #
@@ -84,7 +86,7 @@ def load_file(path):
             # Ignore comments and empty lines
             data = "\n".join([line for line in data.split("\n") \
                     if line and not line.startswith("#")])
-    except IOError:
+    except OSError:
         return ""
     else:
         return data
@@ -142,12 +144,7 @@ def touch(filename):
             os.utime(filename, None)
         else:
             open(filename, "w").close()
-    except IOError, error:
-        if error.errno != 13:
-            raise
-        else:
-            return False
-    except OSError, error:
+    except OSError as error:
         if error.errno != 13:
             raise
         else:
@@ -160,7 +157,7 @@ def get_kernel_option(option):
 
     try:
         cmdline = open("/proc/cmdline").read().split()
-    except IOError:
+    except OSError:
         return args
 
     for cmd in cmdline:
@@ -182,7 +179,6 @@ def get_kernel_option(option):
 ##########################################
 # Reboot/shutdown related methods        #
 ##########################################
-
 @skip_for_lxc_guests
 def load_kexec_image():
     """Attempts to load a kexec image if configured."""
@@ -204,7 +200,7 @@ def load_kexec_image():
 
         stage = sys.argv[1]
 
-        if kexec_reboot and stage == "reboot" or \
+        if (kexec_reboot and stage == "reboot") or \
            (kexec_shutdown and stage == "shutdown"):
 
             kernel_ver = os.uname()[2]
@@ -218,18 +214,18 @@ def load_kexec_image():
 
             if not os.path.exists(default_kernel):
                 # default to running kernel if no latest
-                default_kernel = "/boot/kernel-%s" % kernel_ver
+                default_kernel = "/boot/kernel-{}".format(kernel_ver)
             elif kernel_suffix:
-                default_kernel += "-%s" % kernel_suffix
+                default_kernel += "-{}".format(kernel_suffix)
 
             if not os.path.exists(default_initrd):
-                default_initrd = "/boot/initramfs-%s" % kernel_ver
+                default_initrd = "/boot/initramfs-{}".format(kernel_ver)
             elif kernel_suffix:
-                default_initrd += "-%s" % kernel_suffix
+                default_initrd += "-{}".format(kernel_suffix)
 
             # Get relevant parameters
-            append_params = conf.get("APPEND_CMDLINE_%s" % stage.upper())
-            owrite_params = conf.get("OVERWRITE_CMDLINE_%s" % stage.upper())
+            append_params = conf.get("APPEND_CMDLINE_{}".format(stage.upper()))
+            owrite_params = conf.get("OVERWRITE_CMDLINE_{}".format(stage.upper()))
 
             # Override the images if provided in conf
             kernel_image = conf.get("KERNEL_IMAGE", default_kernel)
@@ -248,7 +244,8 @@ def load_kexec_image():
                           "--initrd", initrd_image, "--reuse-cmdline")
 
             try:
-                loaded = open("/sys/kernel/kexec_loaded").read().strip() == "1"
+                with open("/sys/kernel/kexec_loaded") as f:
+                    loaded = f.read().strip() == "1"
             except OSError:
                 pass
 
@@ -275,13 +272,15 @@ def run_async(cmd, stdout=None, stderr=None):
     """Runs a command in background and redirects the outputs optionally."""
     fstdout = stdout if stdout else "/dev/null"
     fstderr = stderr if stderr else "/dev/null"
-    return subprocess.Popen(cmd,
-                            stdout=open(fstdout, "w"),
-                            stderr=open(fstderr, "w")).pid
+    with open(fstdout, "w") as out_file, open(fstderr, "w") as err_file:
+        return subprocess.Popen(cmd,
+                                stdout=out_file,
+                                stderr=err_file).pid
 
 def run(*cmd):
     """Runs a command without running a shell, only output errors."""
-    return subprocess.call(cmd, stdout=open("/dev/null", "w"))
+    with open("/dev/null", "w") as null_file:
+        return subprocess.call(cmd, stdout=null_file)
 
 def run_full(*cmd):
     """Runs a command without running a shell, with full output."""
@@ -289,8 +288,9 @@ def run_full(*cmd):
 
 def run_quiet(*cmd):
     """Runs a command without running a shell and no output."""
-    _file = open("/dev/null", "w")
-    return subprocess.call(cmd, stdout=_file, stderr=_file)
+    with open("/dev/null", "w") as null_file:
+        return subprocess.call(cmd, stdout=null_file, stderr=null_file)
+
 
 ################
 # Logger class #
@@ -298,6 +298,7 @@ def run_quiet(*cmd):
 
 class Logger:
     """Logger class for dumping into /var/log/mudur.log."""
+    
     def __init__(self):
         self.lines = ["\n"]
 
@@ -305,7 +306,7 @@ class Logger:
         """Logs the given message."""
         stamp = time.strftime("%b %d %H:%M:%S")
         # Strip color characters
-        msg = re.sub("(\033.*?m)", "", msg)
+        msg = re.sub(r"(\033.*?m)", "", msg)
         self.lines.append("[%.3f] %s %s\n" % (time.time(), stamp, msg))
 
     def debug(self, msg):
@@ -319,8 +320,10 @@ class Logger:
             self.lines.append("\n")
             with open("/var/log/mudur.log", "a") as _file:
                 _file.writelines(self.lines)
+            self.lines.clear()  # Clear lines after flushing to log
         except IOError:
             UI.error(_("Cannot write mudur.log, read-only file system"))
+
 
 ################
 # Config class #
@@ -328,6 +331,7 @@ class Logger:
 
 class Config:
     """Configuration class which parses /proc/cmdline to get mudur options."""
+    
     def __init__(self):
         self.fstab = None
 
@@ -337,18 +341,18 @@ class Config:
 
         # Default options for mudur= in /proc/cmdline
         self.options = {
-            "language"      : "en",
-            "clock"         : "local",
-            "clock_adjust"  : "no",
-            "tty_number"    : "6",
-            "lxc_guest"     : "no",
-            "keymap"        : None,
-            "debug"         : True,
-            "live"          : False,
-            "safe"          : False,
-            "forcefsck"     : False,
-            "head_start"    : "",
-            "services"      : "",
+            "language": "en",
+            "clock": "local",
+            "clock_adjust": "no",
+            "tty_number": "6",
+            "lxc_guest": "no",
+            "keymap": None,
+            "debug": True,
+            "live": False,
+            "safe": False,
+            "forcefsck": False,
+            "head_start": "",
+            "services": "",
         }
 
         # Load config file if exists
@@ -365,25 +369,21 @@ class Config:
         """Parse mudur= from kernel boot parameters."""
         # We need to mount /proc before accessing kernel options
         # This function is called after that, and finish parsing options
-        # We dont print any messages before, cause language is not known
+        # We don't print any messages before, because language is not known
         options = get_kernel_option("mudur")
 
         # Fill in the options
-        self.options["live"] = options.has_key("thin") or \
-                               os.path.exists("/run/pisilinux/livemedia")
+        self.options["live"] = "thin" in options or os.path.exists("/run/pisilinux/livemedia")
 
-        for k in [_k for _k in options.keys() if _k not in ("thin")]:
+        for k in [key for key in options.keys() if key != "thin"]:
             self.options[k] = options[k] if options[k] else True
 
         # Normalize options
 
         # If language is unknown, default to English
-        # Default language is Turkish, so this only used if someone
-        # selected a language which isn't Turkish or English, and
-        # in that case it is more likely they'll prefer English.
         lang = self.options["language"]
-        if not LANGUAGES.has_key(lang):
-            print "Unknown language option '%s'" % lang
+        if lang not in LANGUAGES:
+            print(f"Unknown language option '{lang}'")
             lang = "en"
             self.options["language"] = lang
 
@@ -396,14 +396,14 @@ class Config:
         try:
             return self.options[key]
         except KeyError:
-            print "Unknown option '%s' requested" % key
+            print(f"Unknown option '{key}' requested")
             time.sleep(3)
 
     def get_fstab_entry_with_mountpoint(self, mountpoint):
         """Returns /etc/fstab entry corresponding to the given mountpoint."""
         if not self.fstab:
             data = load_file("/etc/fstab").split("\n")
-            self.fstab = [line.split() for line in data]
+            self.fstab = [line.split() for line in data if line]
 
         for entry in self.fstab:
             if entry and len(entry) > 3 and entry[1] == mountpoint:
@@ -421,8 +421,7 @@ class Plymouth:
         """Plymouth constructor."""
         self.client = "/bin/plymouth"
         self.daemon = "/sbin/plymouthd"
-        self.available = CONFIG.get("lxc_guest") != "yes" \
-                and os.path.exists(self.client)
+        self.available = CONFIG.get("lxc_guest") != "yes" and os.path.exists(self.client)
         self.running = self.available and not run_quiet(self.client, "--ping")
 
     def send_cmd(self, *cmd):
@@ -449,7 +448,7 @@ class Plymouth:
 
     def update(self, milestone):
         """Updates status milestones."""
-        self.send_cmd("update", "--status=%s" % milestone)
+        self.send_cmd("update", f"--status={milestone}")
 
     def rootfs_is_now_rw(self):
         """Notifies that rootfs is now rw."""
@@ -458,6 +457,7 @@ class Plymouth:
     def quit(self, retain_splash=False):
         """Quits the daemon."""
         self.send_cmd("quit", "--retain-splash" if retain_splash else "")
+
 
 ############
 # Ui class #
@@ -473,63 +473,65 @@ class Ui:
     K_UNICODE = 0x03
 
     def __init__(self):
-        self.colors = {'red'        : '\x1b[31;01m', # BAD
-                       'blue'       : '\x1b[34;01m',
-                       'cyan'       : '\x1b[36;01m',
-                       'gray'       : '\x1b[30;01m',
-                       'green'      : '\x1b[32;01m', # GOOD
-                       'light'      : '\x1b[37;01m',
-                       'yellow'     : '\x1b[33;01m', # WARN
-                       'magenta'    : '\x1b[35;01m',
-                       'reddark'    : '\x1b[31;0m',
-                       'bluedark'   : '\x1b[34;0m',
-                       'cyandark'   : '\x1b[36;0m',
-                       'graydark'   : '\x1b[30;0m',
-                       'greendark'  : '\x1b[32;0m',
-                       'magentadark': '\x1b[35;0m',
-                       'normal'     : '\x1b[0m'}     # NORMAL
+        self.colors = {
+            'red': '\x1b[31;01m',  # BAD
+            'blue': '\x1b[34;01m',
+            'cyan': '\x1b[36;01m',
+            'gray': '\x1b[30;01m',
+            'green': '\x1b[32;01m',  # GOOD
+            'light': '\x1b[37;01m',
+            'yellow': '\x1b[33;01m',  # WARN
+            'magenta': '\x1b[35;01m',
+            'reddark': '\x1b[31;0m',
+            'bluedark': '\x1b[34;0m',
+            'cyandark': '\x1b[36;0m',
+            'graydark': '\x1b[30;0m',
+            'greendark': '\x1b[32;0m',
+            'magentadark': '\x1b[35;0m',
+            'normal': '\x1b[0m'  # NORMAL
+        }
 
     def greet(self):
         """Dump release information, sets unicode mode."""
-        print self.UNICODE_MAGIC
+        print(self.UNICODE_MAGIC)
         if os.path.exists("/etc/pisilinux-release"):
             release = load_file("/etc/pisilinux-release").rstrip("\n")
-            print "\x1b[1m  %s  \x1b[0;36mhttp://www.pisilinux.org\x1b[0m" \
-                    % release
+            print("\x1b[1m  %s  \x1b[0;36mhttp://www.pisilinux.org\x1b[0m" % release)
         else:
             self.error(_("Cannot find /etc/pisilinux-release"))
-        print
+        print()
 
     def info(self, msg):
         """Print the given message and log if debug enabled."""
         if CONFIG.get("debug"):
             LOGGER.log(msg)
         sys.stdout.write(" %s*%s %s\n" % (self.colors['green'],
-                         self.colors['normal'], msg.encode("utf-8")))
+                                             self.colors['normal'], msg.encode("utf-8")))
 
     def warn(self, msg):
         """Print the given message as a warning and log if debug enabled."""
         LOGGER.log(msg)
         sys.stdout.write(" %s*%s %s\n" % (self.colors['yellow'],
-                         self.colors['normal'], msg.encode("utf-8")))
+                                             self.colors['normal'], msg.encode("utf-8")))
 
     def error(self, msg):
         """Print the given message as an error and log if debug enabled."""
         SPLASH.report_error()
         LOGGER.log(msg)
         sys.stdout.write(" %s*%s %s\n" % (self.colors['red'],
-                         self.colors['normal'], msg.encode("utf-8")))
+                                             self.colors['normal'], msg.encode("utf-8")))
 
     def colorize(self, uicolor, msg):
         """Colorizes the given message."""
         return "%s%s%s" % (self.colors[uicolor], msg, self.colors['normal'])
+
 
 ##################
 # Language class #
 ##################
 
 class Language:
-    """Dummy class to hold language informations."""
+    """Dummy class to hold language information."""
 
     def __init__(self, keymap, font, trans, locale):
         self.keymap = keymap
@@ -538,30 +540,29 @@ class Language:
         self.locale = locale
 
 
-
 ########################################
 # Language and console related methods #
 ########################################
 
 LANGUAGES = {
-    "ca"    : Language("es",         "iso01.16",   "8859-1", "ca_ES.UTF-8"),
-    "de"    : Language("de",         "iso01.16",   "8859-1", "de_DE.UTF-8"),
-    #"el"    : Language("gr",         "iso07u-16",  "",       "el_GR.UTF-8"),
-    "en"    : Language("us",         "iso01.16",   "8859-1", "en_US.UTF-8"),
-    "es"    : Language("es",         "iso01.16",   "8859-1", "es_ES.UTF-8"),
-    "fr"    : Language("fr",         "iso01.16",   "8859-1", "fr_FR.UTF-8"),
-    "hu"    : Language("hu",         "lat2a-16",   "8859-2", "hu_HU.UTF-8"),
-    "it"    : Language("it",         "iso01.16",   "8859-1", "it_IT.UTF-8"),
-    "nl"    : Language("nl",         "iso01.16",   "8859-1", "nl_NL.UTF-8"),
-    "pl"    : Language("pl",         "iso02.16",   "8859-2", "pl_PL.UTF-8"),
-    "pt_BR" : Language("br-abnt2",   "iso01.16",   "8859-1", "pt_BR.UTF-8"),
-    "ru"    : Language("ru",         "Cyr_a8x16",  "8859-5", "ru_RU.UTF-8"),
-    "sv"    : Language("sv-latin1",  "lat0-16",    "8859-1", "sv_SE.UTF-8"),
-    "tr"    : Language("trq",        "lat5u-16",   "8859-9", "tr_TR.UTF-8"),
+    "ca": Language("es", "iso01.16", "8859-1", "ca_ES.UTF-8"),
+    "de": Language("de", "iso01.16", "8859-1", "de_DE.UTF-8"),
+    #"el": Language("gr", "iso07u-16", "", "el_GR.UTF-8"),
+    "en": Language("us", "iso01.16", "8859-1", "en_US.UTF-8"),
+    "es": Language("es", "iso01.16", "8859-1", "es_ES.UTF-8"),
+    "fr": Language("fr", "iso01.16", "8859-1", "fr_FR.UTF-8"),
+    "hu": Language("hu", "lat2a-16", "8859-2", "hu_HU.UTF-8"),
+    "it": Language("it", "iso01.16", "8859-1", "it_IT.UTF-8"),
+    "nl": Language("nl", "iso01.16", "8859-1", "nl_NL.UTF-8"),
+    "pl": Language("pl", "iso02.16", "8859-2", "pl_PL.UTF-8"),
+    "pt_BR": Language("br-abnt2", "iso01.16", "8859-1", "pt_BR.UTF-8"),
+    "ru": Language("ru", "Cyr_a8x16", "8859-5", "ru_RU.UTF-8"),
+    "sv": Language("sv-latin1", "lat0-16", "8859-1", "sv_SE.UTF-8"),
+    "tr": Language("trq", "lat5u-16", "8859-9", "tr_TR.UTF-8"),
 }
 
 def set_console_parameters():
-    """Setups encoding, font and mapping for console."""
+    """Setups encoding, font, and mapping for console."""
     lang = CONFIG.get("language")
     keymap = CONFIG.get("keymap")
     language = LANGUAGES[lang]
@@ -582,12 +583,12 @@ def set_system_language():
     # we do here. Note that these are system-wide not per user,
     # and only for reading.
     create_directory("/etc/mudur")
-    write_to_file("/etc/mudur/language", "%s\n" % lang)
-    write_to_file("/etc/mudur/keymap", "%s\n" % keymap)
-    write_to_file("/etc/mudur/locale", "%s\n" % language.locale)
+    write_to_file("/etc/mudur/language", f"{lang}\n")
+    write_to_file("/etc/mudur/keymap", f"{keymap}\n")
+    write_to_file("/etc/mudur/locale", f"{language.locale}\n")
 
     # Update environment if necessary
-    content = "LANG=%s\nLC_ALL=%s\n" % (language.locale, language.locale)
+    content = f"LANG={language.locale}\nLC_ALL={language.locale}\n"
 
     try:
         if content != load_file("/etc/env.d/03locale"):
@@ -609,17 +610,16 @@ def set_unicode_mode():
     lang = CONFIG.get("language")
     language = LANGUAGES[lang]
 
-    for i in xrange(1, int(CONFIG.get("tty_number")) + 1):
+    for i in range(1, int(CONFIG.get("tty_number")) + 1):  # Python 3'te xrange yerine range kullanılır
         try:
-            if os.path.exists("/dev/tty%s" % i):
-                with open("/dev/tty%s" % i, "w") as _file:
+            if os.path.exists(f"/dev/tty{i}"):
+                with open(f"/dev/tty{i}", "w") as _file:
                     fcntl.ioctl(_file, UI.KDSKBMODE, UI.K_UNICODE)
                     _file.write(UI.UNICODE_MAGIC)
-                    run("/usr/bin/setfont", "-f",
-                            language.font,  "-m",
-                            language.trans, "-C", "/dev/tty%s" %i)
-        except:
+                    run("/usr/bin/setfont", "-f", language.font, "-m", language.trans, "-C", f"/dev/tty{i}")
+        except Exception:  # Hataları yakalarken belirli bir istisna yerine genel istisna kullanıldı
             UI.error(_("Could not set unicode mode on tty %d") % i)
+
 
 ######################################
 # Service management related methods #
@@ -632,7 +632,7 @@ def fork_handler():
 
     # Set umask to a sane value
     # (other and group has no write permission by default)
-    os.umask(022)
+    os.umask(0o22)  # Python 3'te umask değerini 0o ile belirtmek önerilir
     # Detach from controlling terminal
     try:
         tty_fd = os.open("/dev/tty", os.O_RDWR)
@@ -651,10 +651,10 @@ def fork_handler():
 def manage_service(service, command):
     """Starts/Stops the given service."""
     cmd = ["/bin/service", "--quiet", service, command]
-    LOGGER.debug("%s service %s.." % (command, service))
+    LOGGER.debug(f"{command} service {service}..")
     subprocess.Popen(cmd, close_fds=True, preexec_fn=fork_handler,
                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    LOGGER.debug("%s service %s..done" % (command, service))
+    LOGGER.debug(f"{command} service {service}..done")
     SPLASH.update(service)
 
 def get_service_list(bus, _all=False):
@@ -692,7 +692,7 @@ def start_services(extras=None):
         # Start network service first
         try:
             manage_service("NetworkManager", "ready")
-        except Exception, error:
+        except Exception as error:  # Python 3'te as ile değiştirildi
             UI.warn(_("Unable to start network:\n  %s") % error)
 
         # Almost everything depends on logger, so start manually
@@ -780,12 +780,11 @@ def stop_dbus():
     """Stops the D-Bus service."""
     UI.info(_("Stopping %s") % "DBus")
     run("/sbin/start-stop-daemon", "--stop", "--quiet",
-            "--pidfile", "/run/dbus/pid")
+        "--pidfile", "/run/dbus/pid")
 
 #############################
 # UDEV management functions #
 #############################
-
 @skip_for_lxc_guests
 @plymouth_update_milestone
 def wait_for_udev_events():
@@ -814,8 +813,7 @@ def copy_udev_rules():
 
     # Moves any persistent rules from /dev/.udev to /etc/udev/rules.d
     for rule in glob.glob("/dev/.udev/tmp-rules--*"):
-        dest = "/etc/udev/rules.d/%s" % \
-                os.path.basename(rule).split("tmp-rules--")[1]
+        dest = f"/etc/udev/rules.d/{os.path.basename(rule).split('tmp-rules--')[1]}"
         try:
             shutil.move(rule, dest)
         except IOError:
@@ -826,13 +824,6 @@ def copy_udev_rules():
 def start_udev():
     """Prepares the startup of udev daemon and starts it."""
 
-    # When these files are missing, lots of trouble happens
-    # so we double check their existence
-    ######
-    # we don't need that; mudur_tmpfiles and baselayout.conf creates this dir and symlink
-    #create_directory("/run/shm")
-    #create_link("/run/shm", "/dev/shm")
-
     # Start udev daemon
     UI.info(_("Starting udev"))
 
@@ -842,6 +833,9 @@ def start_udev():
 
     # Create needed queue directory
     create_directory("/dev/.udev/queue/")
+    # we don't need that; mudur_tmpfiles and baselayout.conf creates this dir and symlink
+    #create_directory("/run/shm")
+    #create_link("/run/shm", "/dev/shm")
 
     # Log things that trigger does
     pid = run_async(["/sbin/udevadm", "monitor", "--env"],
@@ -880,7 +874,7 @@ def update_mtab_for_root():
         except OSError:
             UI.warn(_("Failed removing stale lock file /etc/mtab~"))
 
-    return (run_quiet("/bin/mount", "-f", "/") != mount_failed_lock)
+    return run_quiet("/bin/mount", "-f", "/") != mount_failed_lock
 
 @skip_for_lxc_guests
 @plymouth_update_milestone
@@ -891,7 +885,7 @@ def check_root_filesystem():
         entry = CONFIG.get_fstab_entry_with_mountpoint("/")
         if not entry:
             UI.warn(_("/etc/fstab doesn't contain an entry "
-                "for the root filesystem"))
+                       "for the root filesystem"))
             return
 
         if CONFIG.get("forcefsck") or (len(entry) > 5 and entry[5] != "0"):
@@ -906,23 +900,22 @@ def check_root_filesystem():
                 # -y: Fix whatever the error is without user's intervention
                 ret = run_full("/sbin/fsck", "-C", "-y", "-f", "/")
                 # /forcefsck isn't deleted because check_filesystems needs it.
-                # it'll be deleted in that function.
+                # It'll be deleted in that function.
             else:
                 UI.info(_("Checking root filesystem"))
                 ret = run_full("/sbin/fsck", "-C", "-T", "-a", "/")
+
             if ret == 0:
-                # No errors,just go on
+                # No errors, just go on
                 pass
-            elif ret == 2 or ret == 3:
+            elif ret in [2, 3]:
                 # Actually 2 means that a reboot is required, fsck man page
                 # doesn't mention about 3 but let's leave it as it's harmless.
                 SPLASH.hide_splash()
                 UI.warn(_("Filesystem repaired, but reboot needed!"))
-                i = 0
-                while i < 4:
-                    print "\07"
+                for _ in range(4):
+                    print("\07")  # Play the beep sound
                     time.sleep(1)
-                    i += 1
                 UI.warn(_("Rebooting in 10 seconds..."))
                 time.sleep(10)
                 UI.warn(_("Rebooting..."))
@@ -946,9 +939,9 @@ def mount_root_filesystem():
 
     # We remount here without writing to mtab (-n)
     if run_quiet("/bin/mount", "-n", "-o", "remount,rw", "/") != 0:
-        UI.error(_("Root filesystem could not be mounted read/write\n\
-   You can either login below and manually check your filesytem(s) OR\n\
-   restart your system, press F3 and select 'FS check' from boot menu\n"))
+        UI.error(_("Root filesystem could not be mounted read/write\n"
+                    "You can either login below and manually check your filesystem(s) OR\n"
+                    "restart your system, press F3 and select 'FS check' from boot menu\n"))
 
         # Fail if can't remount r/w
         run_full("/sbin/sulogin")
@@ -957,7 +950,7 @@ def mount_root_filesystem():
     try:
         # Double guard against IO exceptions
         write_to_file("/etc/mtab")
-    except IOError:
+    except OSError:
         UI.warn(_("Couldn't synchronize /etc/mtab from /proc/mounts"))
 
     # This will actually try to update mtab for /. If it fails because
@@ -965,7 +958,7 @@ def mount_root_filesystem():
     update_mtab_for_root()
 
     # Update mtab
-    for entry in load_file("/proc/mounts").split("\n"):
+    for entry in load_file("/proc/mounts").splitlines():
         try:
             devpath = entry.split()[1]
         except IndexError:
@@ -999,11 +992,10 @@ def check_filesystems():
 
         if ret == 0:
             pass
-        elif ret >= 2 and ret <= 3:
+        elif 2 <= ret <= 3:
             UI.warn(_("Filesystem errors corrected"))
         else:
-            UI.error(_("Fsck could not correct all errors, "\
-                       "manual repair needed"))
+            UI.error(_("Fsck could not correct all errors, manual repair needed"))
             run_full("/sbin/sulogin")
 
 @skip_for_lxc_guests
@@ -1017,6 +1009,7 @@ def mount_local_filesystems():
 @skip_for_lxc_guests
 @plymouth_update_milestone
 def mount_tmpfs_run():
+    """Mounts tmpfs on /run."""
     df = os.popen('df 2>/dev/null', 'r')
     for line in df.readlines():
         line = line.strip()
@@ -1088,9 +1081,8 @@ def autoload_modules():
     """Traverses /etc/modules.autoload.d to autoload kernel modules if any."""
     if os.path.exists("/proc/modules"):
         import glob
-        for _file in glob.glob("/etc/modules.autoload.d/kernel-%s*" \
-                % CONFIG.kernel[0]):
-            data = load_file(_file).split("\n")
+        for _file in glob.glob("/etc/modules.autoload.d/kernel-%s*" % CONFIG.kernel[0]):
+            data = load_file(_file).splitlines()
             for module in data:
                 run("/sbin/modprobe", "-q", "-b", module)
 
@@ -1103,15 +1095,13 @@ def set_disk_parameters():
     conf = load_config("/etc/conf.d/hdparm")
     if len(conf) > 0:
         UI.info(_("Setting disk parameters"))
-        if conf.has_key("all"):
+        if "all" in conf:
             for name in os.listdir("/sys/block/"):
-                if name.startswith("sd") and \
-                        len(name) == 3 and not conf.has_key(name):
-                    run_quiet("/sbin/hdparm", "%s" % conf["all"].split(),
-                            "/dev/%s" % name)
-        for key, value in conf:
+                if name.startswith("sd") and len(name) == 3 and name not in conf:
+                    run_quiet("/sbin/hdparm", *conf["all"].split(), "/dev/%s" % name)
+        for key, value in conf.items():
             if key != "all":
-                run_quiet("/sbin/hdparm", "%s" % value.split(), "/dev/%s" % key)
+                run_quiet("/sbin/hdparm", *value.split(), "/dev/%s" % key)
 
 
 ################
@@ -1135,7 +1125,6 @@ def disable_swap():
 
     UI.info(_("Deactivating swap space"))
     run_quiet("/sbin/swapoff", "-a")
-
 
 ##############################
 # Filesystem cleanup methods #
@@ -1178,20 +1167,21 @@ def cleanup_tmp():
     )
 
     # Remove directories
-    os.system("rm -rf %s" % " ".join(cleanup_list))
+    # Use subprocess instead of os.system for better handling
+    import subprocess
+    subprocess.run(["rm", "-rf"] + list(cleanup_list))
 
     create_directory("/tmp/.ICE-unix")
     os.chown("/tmp/.ICE-unix", 0, 0)
-    os.chmod("/tmp/.ICE-unix", 01777)
+    os.chmod("/tmp/.ICE-unix", 0o1777)  # Use 0o for octal
 
     create_directory("/tmp/.X11-unix")
     os.chown("/tmp/.X11-unix", 0, 0)
-    os.chmod("/tmp/.X11-unix", 01777)
+    os.chmod("/tmp/.X11-unix", 0o1777)  # Use 0o for octal
 
 ########################################
 # System time/Clock management methods #
 ########################################
-
 @skip_for_lxc_guests
 @plymouth_update_milestone
 def set_clock():
@@ -1212,8 +1202,7 @@ def set_clock():
             write_to_file("/etc/adjtime", "0.0 0 0.0\n")
         ret = capture("/sbin/hwclock", adj, options)
         if ret[1] != '':
-            UI.error(_("Failed to adjust systematic "\
-                       "drift of the hardware clock"))
+            UI.error(_("Failed to adjust systematic drift of the hardware clock"))
 
     ret = capture("/sbin/hwclock", "--hctosys", options)
     if ret[1] != '':
@@ -1240,8 +1229,8 @@ def stop_system():
     def get_fs_entries():
         """Parses and returns /proc/mounts entries."""
         entries = []
-        # Igore API filesystems
-        vfs = ["proc", "devpts", "sysfs", "devtmpfs", "squashfs", \
+        # Ignore API filesystems
+        vfs = ["proc", "devpts", "sysfs", "devtmpfs", "squashfs", 
                "tmpfs", "rootfs", "debugfs", "cgroup", "configfs"]
         for entry in load_file("/proc/mounts").split("\n"):
             fields = entry.split()
@@ -1256,8 +1245,7 @@ def stop_system():
         rootfs = None
         for entry in load_file("/proc/mounts").split("\n"):
             fields = entry.split()
-            if len(fields) > 2 and fields[0] != "rootfs" \
-                    and fields[1] == "/":
+            if len(fields) > 2 and fields[0] != "rootfs" and fields[1] == "/":
                 rootfs = fields
                 break
 
@@ -1267,8 +1255,7 @@ def stop_system():
         if force:
             ret += run_quiet("/bin/umount", "-n", "-r", rootfs[1])
         else:
-            ret += run_quiet("/bin/mount", "-n", "-o",
-                             "remount,ro", rootfs[1])
+            ret += run_quiet("/bin/mount", "-n", "-o", "remount,ro", rootfs[1])
         if ret:
             run_quiet("/sbin/killall5", "-9")
         return ret
@@ -1308,13 +1295,13 @@ def stop_system():
 def except_hook(e_type, e_value, e_trace):
     """Hook that intercepts and handles exceptions."""
     import traceback
-    print
-    print _("An internal error occured. Please report to the bugs.pisilinux.org"
-            "with following information:").encode("utf-8")
-    print
-    print e_type, e_value
+    print()
+    print(_("An internal error occurred. Please report to bugs.pisilinux.org "
+            "with the following information:").encode("utf-8"))
+    print()
+    print(e_type, e_value)
     traceback.print_tb(e_trace)
-    print
+    print()
     run_full("/sbin/sulogin")
 
 
@@ -1335,17 +1322,16 @@ def main():
     signal.signal(signal.SIGQUIT, signal.SIG_IGN)
     signal.signal(signal.SIGTSTP, signal.SIG_IGN)
     sys.excepthook = except_hook
-    os.umask(022)
+    os.umask(0o22)  # Use octal notation for the umask value
 
     # Setup path just in case
     os.environ["PATH"] = "/bin:/sbin:/usr/bin:/usr/sbin:" + os.environ["PATH"]
 
     # We can log the event with uptime information now
-    LOGGER.log("/sbin/mudur.py %s" % sys.argv[1])
+    LOGGER.log(f"/sbin/mudur.py {sys.argv[1]}")  # Using f-string for string formatting
 
     # Activate i18n, we can print localized messages from now on
     load_translations()
-
 
     ### SYSINIT ###
     if sys.argv[1] == "sysinit":
@@ -1395,28 +1381,23 @@ def main():
         write_to_file("/run/utmp")
         touch("/var/log/wtmp")
 
-        #create_directory("/run/lock")
-        #create_directory("/run/lock/subsys")
-        #create_directory("/run/pisilinux")
-
         run("/bin/chgrp", "utmp", "/run/utmp", "/var/log/wtmp")
 
-        os.chmod("/run/utmp", 0664)
-        os.chmod("/var/log/wtmp", 0664)
+        os.chmod("/run/utmp", 0o664)  # Use octal notation for permissions
+        os.chmod("/var/log/wtmp", 0o664)  # Use octal notation for permissions
 
         # Create tmpfiles
         UI.info(_("Creating tmpfiles"))
-        if not os.path.isdir("/run/tmpfiles.d"): create_directory("/run/tmpfiles.d")
+        if not os.path.isdir("/run/tmpfiles.d"):
+            create_directory("/run/tmpfiles.d")
         run("/usr/bin/kmod", "static-nodes", "--format=tmpfiles", "--output=/run/tmpfiles.d/kmod.conf")
         out = [line for line in capture("/sbin/mudur_tmpfiles.py", "--boot")[0].split("\n") if line.strip()]
-        if out: LOGGER.log("Errors during tmpfiles creation.\n\t%s" % "\n\t".join(out))
+        if out:
+            LOGGER.log("Errors during tmpfiles creation.\n\t%s" % "\n\t".join(out))
         run("mount", "-t", "tmpfs", "tmpfs", "/dev/shm")
 
         # Start udev and event triggering
         start_udev()
-
-        # Grab persistent rules and udev.log file from /dev
-        #copy_udev_rules()
 
     ### BOOT ###
     elif sys.argv[1] == "boot":
@@ -1431,7 +1412,6 @@ def main():
 
         # Prune needsrestart and needsreboot files if any
         prune_needs_action_package_list()
-        #cleanup_run()
 
         # Update environment variables according to the modification
         # time of the relevant files
@@ -1449,7 +1429,6 @@ def main():
         set_unicode_mode()
 
         # Call udev settle
-#        trigger_failed_udev_events()
         wait_for_udev_events()
 
     ### DEFAULT ###
@@ -1491,7 +1470,6 @@ def main():
             kexec_halt()
 
         if sys.argv[1] == "reboot":
-
             # Shut down all network interfaces just before halt or reboot,
             # When halting the system do a poweroff. This is the default
             # when halt is called as powerof. Don't write the wtmp record.
@@ -1499,7 +1477,6 @@ def main():
 
             # Force halt or reboot, don't call shutdown
             run("/sbin/reboot", "-f")
-
         else:
             run("/sbin/halt", "-ihdp")
             run("/sbin/halt", "-f")
@@ -1511,12 +1488,14 @@ def main():
     except IOError:
         pass
 
+
 ############################
 # Main program starts here #
 ############################
 if __name__ == "__main__":
-    if get_kernel_option("mudur").has_key("profile"):
+    if "profile" in get_kernel_option("mudur"):
         import cProfile
-        cProfile.run("main()", "/dev/.mudur-%s.log" % sys.argv[1])
+        cProfile.run("main()", f"/dev/.mudur-{sys.argv[1]}.log")  # f-string kullanımı
     else:
         main()
+

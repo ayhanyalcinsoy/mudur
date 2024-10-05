@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 # -*- coding: utf-8 -*-
 #
 # A script to update the environment
@@ -59,40 +59,39 @@ def read_env_d(envdir):
         if name.endswith("~") or name.endswith(".bak") or name.endswith(",v"):
             continue
         # skip pisi's config file backups
-        # .oldconfig is obsolete, but checked anyway cause it may still exist at old systems
         if name.endswith(".oldconfig") or name.endswith(".newconfig"):
             continue
         paths.append(path)
     paths.sort()
 
     for path in paths:
-        for line in file(path):
-            if line == "" or line.startswith("#"):
-                continue
+        with open(path) as file:
+            for line in file:
+                if line == "" or line.startswith("#"):
+                    continue
 
-            line = line.rstrip("\n")
-            if "=" in line:
-                key, value = line.split("=", 1)
-                key = key.strip()
-                value = value.strip()
-                if value.startswith('"') or value.startswith("'"):
-                    value = value[1:-1]
+                line = line.rstrip("\n")
+                if "=" in line:
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if value.startswith('"') or value.startswith("'"):
+                        value = value[1:-1]
 
-                # Merge for special variables, override for others
-                if key in specials:
-                    if d.has_key(key):
-                        d[key].extend(value.split(":"))
+                    # Merge for special variables, override for others
+                    if key in specials:
+                        if key in d:
+                            d[key].extend(value.split(":"))
+                        else:
+                            d[key] = value.split(":")
                     else:
-                        d[key] = value.split(":")
-                else:
-                    d[key] = value
+                        d[key] = value
 
     return d
 
 def generate_profile_env(envdict, format='export %s="%s"\n'):
     profile = ""
-    keys = envdict.keys()
-    keys.sort()
+    keys = sorted(envdict.keys())
     for key in keys:
         tmp = envdict[key]
         if isinstance(tmp, list):
@@ -101,9 +100,8 @@ def generate_profile_env(envdict, format='export %s="%s"\n'):
     return header + header_note + profile
 
 def update_file(path, content):
-    f = file(path, "w")
-    f.write(content)
-    f.close()
+    with open(path, "w") as f:
+        f.write(content)
 
 def update_environment(prefix):
     join = os.path.join
@@ -117,21 +115,22 @@ def update_environment(prefix):
 #
 
 def usage():
-    print "update-environment [--destdir <prefix>]"
+    print("update-environment [--destdir <prefix>]")
 
 def main(argv):
     prefix = "/"
 
     try:
-        opts, args = getopt.gnu_getopt(argv, "h", [ "help", "destdir=", "live" ])
+        opts, args = getopt.gnu_getopt(argv, "h", ["help", "destdir=", "live"])
     except getopt.GetoptError:
         usage()
+        sys.exit(1)
 
     for o, a in opts:
         if o in ("-h", "--help"):
             usage()
             sys.exit(0)
-        if o in ("--destdir"):
+        if o == "--destdir":
             prefix = a
 
     update_environment(prefix)
